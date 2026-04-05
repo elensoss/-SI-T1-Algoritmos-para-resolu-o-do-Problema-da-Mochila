@@ -4,6 +4,7 @@
 #include <random>
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 
 struct Item {
     int peso;
@@ -87,26 +88,65 @@ int main() {
     }
     file.close();
 
-    std::vector<int> melhorSolucao;
+    // --- CONFIGURAÇÃO DAS EXECUÇÕES ---
+    int numExecucoes = 30; // Padrão acadêmico para ter relevância estatística
     
-    // Execução do experimento
-    std::cout << "Executando Tempera Simulada..." << std::endl;
-    simulatedAnnealing(itens, capacidade, melhorSolucao);
+    int melhorGlobal = -1;
+    int piorGlobal = 9999999;
+    double somaValores = 0.0;
+    
+    std::cout << "Iniciando bateria de testes (" << numExecucoes << " execucoes)..." << std::endl;
 
-    // Relatório de Resultados (O que vai para o artigo)
-    std::cout << "--- RESULTADOS ---" << std::endl;
-    int pesoFinal = 0;
-    int valorFinal = 0;
-    for (int i = 0; i < n; ++i) {
-        if (melhorSolucao[i] == 1) {
-            std::cout << "Item " << i << " (P: " << itens[i].peso << " V: " << itens[i].valor << ")\n";
-            pesoFinal += itens[i].peso;
-            valorFinal += itens[i].valor;
+    for (int exec = 1; exec <= numExecucoes; ++exec) {
+        
+        // Zera a solução para esta execução
+        std::vector<int> melhorSolucao;
+        if (n > 0 && n == itens.size()) { // Pro AG funcionar sem dar erro, inicialize com zeros:
+            melhorSolucao = std::vector<int>(n, 0); 
         }
+
+        simulatedAnnealing(itens, capacidade, melhorSolucao);
+        // algoritmoGenetico(itens, capacidade, melhorSolucao);
+
+        int pesoFinal = 0;
+        int valorFinal = 0;
+        
+        // Calcula o valor real da mochila dessa execução
+        for (int i = 0; i < n; ++i) {
+            if (melhorSolucao[i] == 1) {
+                pesoFinal += itens[i].peso;
+                valorFinal += itens[i].valor;
+            }
+        }
+
+        // Verifica se a penalidade estrita segurou a restrição
+        if (pesoFinal > capacidade) {
+            std::cout << "[AVISO] Execucao " << exec << " gerou solucao invalida!" << std::endl;
+            // Opcional: zerar o valor se for inválida para punir a média
+            valorFinal = 0; 
+        }
+
+        // Atualiza as estatísticas
+        somaValores += valorFinal;
+        if (valorFinal > melhorGlobal) melhorGlobal = valorFinal;
+        if (valorFinal < piorGlobal) piorGlobal = valorFinal;
+
+        // Mostra o progresso (opcional, só para você saber que não travou)
+        std::cout << "Execucao " << exec << " concluida: Valor = " << valorFinal << std::endl;
     }
-    std::cout << "------------------" << std::endl;
-    std::cout << "Peso Total: " << pesoFinal << "/" << capacidade << std::endl;
-    std::cout << "Valor Total: " << valorFinal << std::endl;
+
+    // --- RELATÓRIO ESTATÍSTICO PARA O ARTIGO ---
+    double media = somaValores / numExecucoes;
+
+    std::cout << "\n================ RESUMO ESTATISTICO ================" << std::endl;
+    std::cout << "Instancia: " << n << " itens | Capacidade: " << capacidade << std::endl;
+    std::cout << "Total de Execucoes: " << numExecucoes << std::endl;
+    std::cout << "----------------------------------------------------" << std::endl;
+    std::cout << "Melhor Valor Encontrado : " << melhorGlobal << std::endl;
+    std::cout << "Pior Valor Encontrado   : " << piorGlobal << std::endl;
+    std::cout << std::fixed << std::setprecision(2); // Formata para 2 casas decimais
+    std::cout << "Media dos Valores       : " << media << std::endl;
+    std::cout << "====================================================" << std::endl;
 
     return 0;
 }
