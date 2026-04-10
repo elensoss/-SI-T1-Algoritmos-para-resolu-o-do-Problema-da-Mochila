@@ -1,4 +1,3 @@
-# Projeto: Problema da Mochila 0/1 (Algoritmo Genético)
 
 Este repositório contém a implementação de um **Algoritmo Genético (AG)** para resolver o Problema da Mochila 0/1.
 
