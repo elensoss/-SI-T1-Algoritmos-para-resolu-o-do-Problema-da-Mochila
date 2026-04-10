@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <chrono>
 
 struct Item {
     int peso;
@@ -12,9 +13,11 @@ struct Item {
 };
 
 // Modelagem da Função Objetivo com Penalidade Suave (Melhor para o SA)
-double calcularFitness(const std::vector<int>& solucao, const std::vector<Item>& itens, int capacidade) {
+// Nova função de Avaliação com Penalidade Dinâmica (Densidade Máxima)
+double calcularFitness(const std::vector<int>& solucao, const std::vector<Item>& itens, int capacidade, double rho_max) {
     int pesoTotal = 0;
     int valorTotal = 0;
+    
     for (size_t i = 0; i < itens.size(); ++i) {
         if (solucao[i] == 1) {
             pesoTotal += itens[i].peso;
@@ -22,43 +25,53 @@ double calcularFitness(const std::vector<int>& solucao, const std::vector<Item>&
         }
     }
 
-    if (pesoTotal <= capacidade) {
+    int excesso = pesoTotal - capacidade;
+    
+    if (excesso <= 0) {
+        // Mochila válida: retorna apenas o valor
         return (double)valorTotal;
     } else {
-        return (double)valorTotal - (pesoTotal * 100); 
+        // Mochila inválida: pune o que passou usando a densidade máxima
+        return (double)valorTotal - (excesso * excesso * rho_max); 
     }
 }
 
-void simulatedAnnealing(const std::vector<Item>& itens, int capacidade, std::vector<int>& melhorGlobal) {
+void simulatedAnnealing(const std::vector<Item>& itens, int capacidade, std::vector<int>& melhorGlobal, double rho_max) {
     int n = itens.size();
-    std::vector<int> atual(n, 0); 
+    
     
     // Inicialização do Gerador (C++11)
     std::random_device rd;
     std::mt19937 generator(rd());
     std::uniform_real_distribution<double> distProb(0.0, 1.0);
     std::uniform_int_distribution<int> distItem(0, n - 1);
+    std::uniform_int_distribution<int> distBin(0, 1);
+
+    std::vector<int> atual(n); 
+    for (int i = 0; i < n; ++i) {
+        atual[i] = distBin(generator);
+    }
 
     double T = 1000.0;
     double alfa = 0.995;
     melhorGlobal = atual;
 
-    while (T > 0.001) {
+    while (T > 0.0001) {
         // 1. Geração do Vizinho (Operador de Mutação/Bit-flip)
         std::vector<int> proximo = atual;
         int idx = distItem(generator);
         proximo[idx] = 1 - proximo[idx];
 
         // 2. Cálculo da variação de energia (Delta)
-        double vAtual = calcularFitness(atual, itens, capacidade);
-        double vProximo = calcularFitness(proximo, itens, capacidade);
+        double vAtual = calcularFitness(atual, itens, capacidade, rho_max);
+        double vProximo = calcularFitness(proximo, itens, capacidade, rho_max);
         double delta = vProximo - vAtual;
 
         // 3. Critério de Metropolis
         if (delta > 0) {
             atual = proximo;
             // Mantém rastreio da melhor solução já vista (Best-so-far)
-            if (calcularFitness(atual, itens, capacidade) > calcularFitness(melhorGlobal, itens, capacidade)) {
+            if (calcularFitness(atual, itens, capacidade, rho_max) > calcularFitness(melhorGlobal, itens, capacidade, rho_max)) {
                 melhorGlobal = atual;
             }
         } else {
@@ -73,7 +86,7 @@ void simulatedAnnealing(const std::vector<Item>& itens, int capacidade, std::vec
 }
 
 int main() {
-    std::ifstream file("entrada.txt");
+    std::ifstream file("entrada_50.txt");
     if (!file.is_open()) {
         std::cerr << "Erro ao abrir o arquivo de entrada!" << std::endl;
         return 1;
@@ -88,25 +101,34 @@ int main() {
     }
     file.close();
 
+    // --- NOVO CÁLCULO DE PENALIDADE (10% do Valor Total) ---
+    double rho_max = capacidade * 0.1;
+
     // --- CONFIGURAÇÃO DAS EXECUÇÕES ---
-    int numExecucoes = 30; // Padrão acadêmico para ter relevância estatística
+    int numExecucoes = 100; // Padrão acadêmico para ter relevância estatística
     
     int melhorGlobal = -1;
     int piorGlobal = 9999999;
     double somaValores = 0.0;
     
+    // Variável para contar quantas vezes o algoritmo falhou (solução inválida)
+    int invalidasCount = 0; 
+    
     std::cout << "Iniciando bateria de testes (" << numExecucoes << " execucoes)..." << std::endl;
+
+    // Marca o tempo de início
+    auto start_time = std::chrono::high_resolution_clock::now();
 
     for (int exec = 1; exec <= numExecucoes; ++exec) {
         
         // Zera a solução para esta execução
         std::vector<int> melhorSolucao;
-        if (n > 0 && n == itens.size()) { // Pro AG funcionar sem dar erro, inicialize com zeros:
+        if (n > 0 && n == itens.size()) { 
             melhorSolucao = std::vector<int>(n, 0); 
         }
 
-        simulatedAnnealing(itens, capacidade, melhorSolucao);
-        // algoritmoGenetico(itens, capacidade, melhorSolucao);
+        simulatedAnnealing(itens, capacidade, melhorSolucao, rho_max);
+        // algoritmoGenetico(itens, capacidade, melhorSolucao, rho_max);
 
         int pesoFinal = 0;
         int valorFinal = 0;
@@ -121,30 +143,44 @@ int main() {
 
         // Verifica se a penalidade estrita segurou a restrição
         if (pesoFinal > capacidade) {
-            std::cout << "[AVISO] Execucao " << exec << " gerou solucao invalida!" << std::endl;
-            // Opcional: zerar o valor se for inválida para punir a média
-            valorFinal = 0; 
+            std::cout << "[AVISO] Execucao " << exec << " gerou solucao invalida (Peso: " << pesoFinal << ")!" << std::endl;
+            valorFinal = 0; // Zera o valor para punir a média
+            invalidasCount++; // Incrementa o contador de falhas
         }
 
         // Atualiza as estatísticas
         somaValores += valorFinal;
         if (valorFinal > melhorGlobal) melhorGlobal = valorFinal;
-        if (valorFinal < piorGlobal) piorGlobal = valorFinal;
+        
+        // Só atualiza o pior global se for uma solução válida (para não poluir a estatística com os '0's)
+        if (valorFinal > 0 && valorFinal < piorGlobal) {
+            piorGlobal = valorFinal;
+        }
 
-        // Mostra o progresso (opcional, só para você saber que não travou)
+        // Mostra o progresso
         std::cout << "Execucao " << exec << " concluida: Valor = " << valorFinal << std::endl;
     }
 
+    // Marca o tempo de fim
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> tempo_decorrido = end_time - start_time;
+
     // --- RELATÓRIO ESTATÍSTICO PARA O ARTIGO ---
     double media = somaValores / numExecucoes;
+    double percentInvalidas = (static_cast<double>(invalidasCount) / numExecucoes) * 100.0;
+
+    // Ajuste caso todas tenham sido inválidas
+    if (piorGlobal == 9999999) piorGlobal = 0; 
 
     std::cout << "\n================ RESUMO ESTATISTICO ================" << std::endl;
     std::cout << "Instancia: " << n << " itens | Capacidade: " << capacidade << std::endl;
     std::cout << "Total de Execucoes: " << numExecucoes << std::endl;
+    std::cout << "Tempo Total Gasto : " << tempo_decorrido.count() << " segundos" << std::endl;
+    std::cout << "----------------------------------------------------" << std::endl;
+    std::cout << "Solucoes Invalidas      : " << invalidasCount << " (" << std::fixed << std::setprecision(2) << percentInvalidas << "%)" << std::endl;
     std::cout << "----------------------------------------------------" << std::endl;
     std::cout << "Melhor Valor Encontrado : " << melhorGlobal << std::endl;
-    std::cout << "Pior Valor Encontrado   : " << piorGlobal << std::endl;
-    std::cout << std::fixed << std::setprecision(2); // Formata para 2 casas decimais
+    std::cout << "Pior Valor Valido       : " << piorGlobal << std::endl;
     std::cout << "Media dos Valores       : " << media << std::endl;
     std::cout << "====================================================" << std::endl;
 

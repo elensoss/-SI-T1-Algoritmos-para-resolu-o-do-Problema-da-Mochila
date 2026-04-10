@@ -4,23 +4,33 @@
 #include <random>
 #include <fstream>
 #include <iomanip>
+#include <chrono>
 
 struct Item {
     int peso;
     int valor;
 };
 
-double calcularFitness(const std::vector<int>& cromossomo, const std::vector<Item>& itens, int capacidade) {
+double calcularFitness(const std::vector<int>& solucao, const std::vector<Item>& itens, int capacidade, double rho_max) {
     int pesoTotal = 0;
     int valorTotal = 0;
+    
     for (size_t i = 0; i < itens.size(); ++i) {
-        if (cromossomo[i] == 1) {
+        if (solucao[i] == 1) {
             pesoTotal += itens[i].peso;
             valorTotal += itens[i].valor;
         }
     }
-    if (pesoTotal <= capacidade) return (double)valorTotal;
-    return (double)valorTotal - (pesoTotal * 100); 
+
+    int excesso = pesoTotal - capacidade;
+    
+    if (excesso <= 0) {
+        // Mochila válida: retorna apenas o valor
+        return (double)valorTotal;
+    } else {
+        // Mochila inválida: pune o que passou usando a densidade máxima
+        return (double)valorTotal - (excesso * rho_max); 
+    }
 }
 
 // --- OPERADORES DO AG ---
@@ -68,11 +78,11 @@ void mutacao(std::vector<int>& cromossomo, double taxaMutacao, std::mt19937& gen
 
 // --- ALGORITMO PRINCIPAL ---
 
-void algoritmoGenetico(const std::vector<Item>& itens, int capacidade, std::vector<int>& melhorGlobal) {
-    int tamPopulacao = 100;
+void algoritmoGenetico(const std::vector<Item>& itens, int capacidade, std::vector<int>& melhorGlobal, double rho_max) {
+    int tamPopulacao = 50;
     int geracoes = 500;
     double taxaCrossover = 0.8;
-    double taxaMutacao = 0.05;
+    double taxaMutacao = 0.01;
     int n = itens.size();
 
     std::random_device rd;
@@ -87,8 +97,8 @@ void algoritmoGenetico(const std::vector<Item>& itens, int capacidade, std::vect
     for (int g = 0; g < geracoes; ++g) {
         std::vector<double> fitnesses(tamPopulacao);
         for (int i = 0; i < tamPopulacao; ++i) {
-            fitnesses[i] = calcularFitness(populacao[i], itens, capacidade);
-            if (fitnesses[i] > calcularFitness(melhorGlobal, itens, capacidade)) {
+            fitnesses[i] = calcularFitness(populacao[i], itens, capacidade, rho_max);
+            if (fitnesses[i] > calcularFitness(melhorGlobal, itens, capacidade, rho_max)) {
                 melhorGlobal = populacao[i];
             }
         }
@@ -136,24 +146,34 @@ int main() {
     }
     file.close();
 
+    // --- NOVO CÁLCULO DE PENALIDADE (20% da Capacidade) ---
+    double rho_max = capacidade * 0.1;
+    std::cout << "Fator de penalidade (rho_max) definido como 20% da capacidade: " << rho_max << std::endl;
+
     // --- CONFIGURAÇÃO DAS EXECUÇÕES ---
-    int numExecucoes = 30; // Padrão acadêmico para ter relevância estatística
+    int numExecucoes = 50; // Padrão acadêmico para ter relevância estatística
     
     int melhorGlobal = -1;
     int piorGlobal = 9999999;
     double somaValores = 0.0;
     
+    // Variável para contar quantas vezes o algoritmo falhou (solução inválida)
+    int invalidasCount = 0; 
+    
     std::cout << "Iniciando bateria de testes (" << numExecucoes << " execucoes)..." << std::endl;
+
+    // Marca o tempo de início
+    auto start_time = std::chrono::high_resolution_clock::now();
 
     for (int exec = 1; exec <= numExecucoes; ++exec) {
         
         // Zera a solução para esta execução
         std::vector<int> melhorSolucao;
-        if (n > 0 && n == itens.size()) { // Pro AG funcionar sem dar erro, inicialize com zeros:
+        if (n > 0 && n == itens.size()) { 
             melhorSolucao = std::vector<int>(n, 0); 
         }
 
-        algoritmoGenetico(itens, capacidade, melhorSolucao);
+        algoritmoGenetico(itens, capacidade, melhorSolucao, rho_max);
 
         int pesoFinal = 0;
         int valorFinal = 0;
@@ -168,30 +188,44 @@ int main() {
 
         // Verifica se a penalidade estrita segurou a restrição
         if (pesoFinal > capacidade) {
-            std::cout << "[AVISO] Execucao " << exec << " gerou solucao invalida!" << std::endl;
-            // Opcional: zerar o valor se for inválida para punir a média
-            valorFinal = 0; 
+            std::cout << "[AVISO] Execucao " << exec << " gerou solucao invalida (Peso: " << pesoFinal << ")!" << std::endl;
+            valorFinal = 0; // Zera o valor para punir a média
+            invalidasCount++; // Incrementa o contador de falhas
         }
 
         // Atualiza as estatísticas
         somaValores += valorFinal;
         if (valorFinal > melhorGlobal) melhorGlobal = valorFinal;
-        if (valorFinal < piorGlobal) piorGlobal = valorFinal;
+        
+        // Só atualiza o pior global se for uma solução válida (para não poluir a estatística com os '0's)
+        if (valorFinal > 0 && valorFinal < piorGlobal) {
+            piorGlobal = valorFinal;
+        }
 
-        // Mostra o progresso (opcional, só para você saber que não travou)
+        // Mostra o progresso
         std::cout << "Execucao " << exec << " concluida: Valor = " << valorFinal << std::endl;
     }
 
+    // Marca o tempo de fim
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> tempo_decorrido = end_time - start_time;
+
     // --- RELATÓRIO ESTATÍSTICO PARA O ARTIGO ---
     double media = somaValores / numExecucoes;
+    double percentInvalidas = (static_cast<double>(invalidasCount) / numExecucoes) * 100.0;
+
+    // Ajuste caso todas tenham sido inválidas
+    if (piorGlobal == 9999999) piorGlobal = 0; 
 
     std::cout << "\n================ RESUMO ESTATISTICO ================" << std::endl;
     std::cout << "Instancia: " << n << " itens | Capacidade: " << capacidade << std::endl;
     std::cout << "Total de Execucoes: " << numExecucoes << std::endl;
+    std::cout << "Tempo Total Gasto : " << tempo_decorrido.count() << " segundos" << std::endl;
+    std::cout << "----------------------------------------------------" << std::endl;
+    std::cout << "Solucoes Invalidas      : " << invalidasCount << " (" << std::fixed << std::setprecision(2) << percentInvalidas << "%)" << std::endl;
     std::cout << "----------------------------------------------------" << std::endl;
     std::cout << "Melhor Valor Encontrado : " << melhorGlobal << std::endl;
-    std::cout << "Pior Valor Encontrado   : " << piorGlobal << std::endl;
-    std::cout << std::fixed << std::setprecision(2); // Formata para 2 casas decimais
+    std::cout << "Pior Valor Valido       : " << piorGlobal << std::endl;
     std::cout << "Media dos Valores       : " << media << std::endl;
     std::cout << "====================================================" << std::endl;
 
